@@ -1,2 +1,2 @@
 # Modelling_and_Optimization
-Coursework
+Prediction of bankruptcy using Gaussian Process, Gradient Boosting and Support Vector Machine Algorithms
