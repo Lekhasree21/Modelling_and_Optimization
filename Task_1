@@ -1,0 +1,287 @@
+#Importing libraries
+import pandas
+import matplotlib.pyplot as plt
+import numpy as np
+import time
+from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.ensemble import GradientBoostingClassifier #76 acc
+from sklearn.svm import SVC
+from sklearn.metrics import roc_auc_score, plot_confusion_matrix, plot_roc_curve, roc_curve
+from imblearn.over_sampling import SMOTE, RandomOverSampler
+from imblearn.under_sampling import RandomUnderSampler
+from xgboost import XGBClassifier
+# import collections
+from collections import Counter
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import SelectFromModel
+
+###################################################################################################################################################################
+############################ Data preprocessing ##############################
+data_f = pandas.read_csv('data.csv')
+
+pandas.set_option('display.max_columns', None)
+# pandas.set_option('display.max_rows', None)
+
+data_f.columns
+
+column_strip = []
+for col_name in range(len(data_f.columns)):
+    column_strip.append(str(data_f.columns[col_name]).strip())  
+
+data_f.columns = column_strip
+data_f.dtypes
+
+############### Null values check ###############
+null_val = [col_val for col_val in data_f.columns if data_f[col_val].isnull().any()]
+null_val
+
+############### Duplicates check ###############
+data_f.duplicated(keep=False).sum()
+
+############### Single value column ###############
+data_f['Net Income Flag'].value_counts() # since this column has only one value, it can be removed
+data_f = data_f.drop('Net Income Flag',axis=1)
+data_f
+
+############### X, y ###############
+x_m = data_f.drop('Bankrupt?', axis=1)
+y = data_f['Bankrupt?']
+
+############### Standardization ###############
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+x = scaler.fit_transform(x_m)
+
+############### Correlation before applying feature selection and extraction ###############
+import matplotlib.pyplot as plt
+plt.figure(figsize=(25,25))
+import seaborn as sns
+sns.heatmap(data_f.corr(), annot=True)
+plt.title('Correlation before applying feature selection and extraction')
+
+############### Train Test Split ###############
+from sklearn.model_selection import train_test_split
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=.3, random_state=18)
+y_test.value_counts()
+
+###################################################################################################################################################################
+############### Machine learning classification models defined functions ###############
+def ml_mod(x_train_mod, y_train_mod, x_test_mod, y_test_mod, model):
+    start_time = time.time()
+    mod = model().fit(x_train_mod, y_train_mod)
+    pred_mod = mod.predict(x_test_mod)
+    acc = accuracy_score(y_test_mod, pred_mod)
+    print('Model: ', model)
+    print(classification_report(y_test_mod, pred_mod))
+    print(confusion_matrix(y_test_mod, pred_mod))
+    elapsed_time = time.time()-start_time
+    print('Time taken for execution: ',elapsed_time)
+    return acc
+    
+def svm_model(x_train_svm, y_train_svm, x_test_svm, y_test_svm):
+    start_time = time.time()    
+    model_svm = SVC(kernel='linear') 
+    model_svm = model_svm.fit(x_train_svm, y_train_svm)
+    pred_svm = model_svm.predict(x_test_svm)
+    acc = accuracy_score(y_test_svm, pred_svm)
+    print('---------SVM--------------')
+    print(classification_report(y_test_svm, pred_svm))
+    print(confusion_matrix(y_test_svm, pred_svm))
+    elapsed_time = time.time()-start_time
+    print('Time taken for support vector machine: ',elapsed_time)
+    return acc
+    
+###################################################################################################################################################################
+############### ROC AUC ###############
+def roc_curves(x_test_roc, y_test_roc, x_test_smote, x_test_ovsam, x_test_unsam,  x_train_smote, y_train_smote,x_train_ovsam, y_train_ovsam,x_train_unsam, y_train_unsam, model_roc, model_name):
+    plt.figure(figsize=(7,7))
+    plt.xlim([-0.10,1.00])
+    plt.ylim([-0.10,1.00])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(model_name)
+    model_1 = model_roc()
+    model_1.fit(x_train_smote, y_train_smote)
+    model_2 = model_roc()
+    model_2.fit(x_train_ovsam, y_train_ovsam)
+    model_3 = model_roc()
+    model_3.fit(x_train_unsam, y_train_unsam)
+    # predictions
+    prob_smote = model_1.predict_proba(x_test_smote)
+    prob_ovsam = model_2.predict_proba(x_test_ovsam)
+    prob_unsam = model_3.predict_proba(x_test_unsam)
+    prob_smote = prob_smote[:, 1]
+    prob_ovsam = prob_ovsam[:, 1]
+    prob_unsam = prob_unsam[:, 1]
+    auc_smote = roc_auc_score(y_test_roc, prob_smote)
+    auc_ovsam = roc_auc_score(y_test_roc, prob_ovsam)
+    auc_unsam = roc_auc_score(y_test_roc, prob_unsam)
+    print('SMOTE: ROC AUC=%.3f' % (auc_smote))
+    print('Over Sampling: ROC AUC=%.3f' % (auc_ovsam))
+    print('Under Sampling: ROC AUC=%.3f' % (auc_unsam))
+    fpr_smote, tpr_smote, _ = roc_curve(y_test_roc, prob_smote)
+    fpr_ovsam, tpr_ovsam, _ = roc_curve(y_test_roc, prob_ovsam)
+    fpr_unsam, tpr_unsam, _ = roc_curve(y_test_roc, prob_unsam)
+    plt.plot(fpr_ovsam, tpr_ovsam, marker='.', label='OverSampling ROC AUC = %.3f' % (auc_ovsam))
+    plt.plot(fpr_smote, tpr_smote, marker='.', label='SMOTE ROC AUC = %.3f' % (auc_smote),  dash_capstyle='round',linestyle=(0, (5, 2, 1, 2)))
+    plt.plot(fpr_unsam, fpr_unsam, marker='.', label='UnderSampling ROC AUC = %.3f' % (auc_unsam))
+    plt.legend(loc='lower right')
+    plt.title(model_name)
+    plt.show()
+    return auc_smote, auc_ovsam, auc_unsam
+
+###################################################################################################################################################################
+############### Class Imbalance Techniques ###############
+############# SMOTE
+smote = SMOTE()
+x_smote, y_smote = smote.fit_resample(x_train, y_train)
+print('Original dataset shape', Counter(y_train))
+print('Resample dataset shape', Counter(y_smote))
+
+############# Random Oversampling
+ovsam = RandomOverSampler()
+x_ovsam, y_ovsam = ovsam.fit_resample(x_train, y_train)
+print('Original dataset shape', Counter(y_train))
+print('Resample dataset shape', Counter(y_ovsam))
+
+############# Random Undersampling
+unsam = RandomUnderSampler(sampling_strategy='majority')
+x_unsam, y_unsam = unsam.fit_resample(x_train, y_train)
+print('Original dataset shape', Counter(y_train))
+print('Resample dataset shape', Counter(y_unsam))
+
+###################################################################################################################################################################
+############### Feature Selection and extraction defined functions ###############
+############# Dimensionality reduction - Principal Component Analysis (PCA)
+#### for 95% variance
+def pca_method(x_train_pca, x_test_pca):
+    pca_95 = PCA(n_components = 0.95)
+    pca_95.fit(x_train_pca)
+    x_pca95_train = pandas.DataFrame(pca_95.transform(x_train_pca))
+    x_pca95_test = pandas.DataFrame(pca_95.transform(x_test_pca))
+    return x_pca95_train, x_pca95_test
+
+def pca_bestf(x_train_pca1,x_train_pca2,x_train_pca3):
+    pca1 = PCA().fit(x_train_pca1)
+    pca2 = PCA().fit(x_train_pca2)
+    pca3 = PCA().fit(x_train_pca3)
+    plt.rcParams["figure.figsize"] = (20,10)
+    fig, ax = plt.subplots()
+    x_pca = np.arange(1, 95, step=1)
+    y1 = np.cumsum(pca1.explained_variance_ratio_)
+    y2 = np.cumsum(pca2.explained_variance_ratio_)
+    y3 = np.cumsum(pca3.explained_variance_ratio_)
+    plt.ylim(0.0,1.1)
+    plt.plot(x_pca, y1, marker='o', linestyle='--', color='b', label="Random OverSampling")
+    plt.plot(x_pca, y2, marker='+', linestyle='-', color='g', label="SMOTE")
+    plt.plot(x_pca, y3, marker='*', linestyle='--', color='orange', label="Random UnderSampling")
+    plt.legend()
+    plt.xlabel('Total Features')
+    plt.xticks(np.arange(0, 95, step=1), rotation = 90) 
+    plt.ylabel('Cumulative variance (%)')
+    plt.title('The number of features needed to explain variance using PCA 95%')
+    plt.axhline(y=0.95, color='r', linestyle='-')
+    plt.text(0.5, 0.85, '95% cut-off threshold', color = 'red', fontsize=16)
+    ax.grid(axis='x')
+    plt.show()
+    return pca1, pca2, pca3
+
+############# Feature Selection - SelectFromModel
+def selectfrommod(model, x_train_sf, y_train_sf,x_test_sf):
+    sf = SelectFromModel(XGBClassifier(),threshold=0.01)
+    sf_fit = sf.fit(x_train_sf, y_train_sf)
+    x_sf_train = pandas.DataFrame(sf_fit.transform(x_train_sf))
+    x_sf_test = pandas.DataFrame(sf_fit.transform(x_test_sf))
+    print('Train columns - ',x_sf_train.columns)
+    print('Test columns - ',x_sf_test.columns)
+    return x_sf_train, x_sf_test
+    
+###################################################################################################################################################################
+########################################################################### Results ###############################################################################
+
+###################################### Model performance on 94 features ######################################
+############# SMOTE data
+ml_mod(x_smote, y_smote, x_test, y_test, GaussianProcessClassifier)
+ml_mod(x_smote, y_smote, x_test, y_test, GradientBoostingClassifier)
+svm_model(x_smote, y_smote, x_test, y_test)
+############# Random Oversampling data
+ml_mod(x_ovsam, y_ovsam, x_test, y_test, GaussianProcessClassifier)
+ml_mod(x_ovsam, y_ovsam, x_test, y_test, GradientBoostingClassifier)
+svm_model(x_ovsam, y_ovsam, x_test, y_test)
+############# Random Undersampling data
+ml_mod(x_unsam, y_unsam, x_test, y_test, GaussianProcessClassifier)
+ml_mod(x_unsam, y_unsam, x_test, y_test, GradientBoostingClassifier)
+svm_model(x_unsam, y_unsam, x_test, y_test)
+
+#################################### Dimensionality reduction - Principal Component Analysis (PCA)
+pca_bestf(x_ovsam, x_smote, x_unsam)
+############# PCA - SMOTE
+x_pca_smote_train, x_pca_smote_test = pca_method(x_smote,x_test)
+
+import matplotlib.pyplot as plt
+plt.figure(figsize=(30,10))
+import seaborn as sns
+sns.heatmap(x_pca_smote_train.corr(), annot=True)
+plt.title('Correlation affter applying pca')
+
+acc_gp_pca_smote = ml_mod(x_pca_smote_train, y_smote, x_pca_smote_test, y_test, GaussianProcessClassifier)
+acc_gb_pca_smote = ml_mod(x_pca_smote_train, y_smote, x_pca_smote_test, y_test, GradientBoostingClassifier)
+acc_svm_pca_smote = svm_model(x_pca_smote_train, y_smote, x_pca_smote_test, y_test)
+
+############# PCA - Random Oversampling
+x_pca_ovsam_train, x_pca_ovsam_test = pca_method(x_ovsam,x_test)
+
+import matplotlib.pyplot as plt
+plt.figure(figsize=(30,10))
+import seaborn as sns
+sns.heatmap(x_pca_ovsam_train.corr(), annot=True)
+plt.title('Correlation affter applying pca')
+
+ml_mod(x_pca_ovsam_train, y_ovsam, x_pca_ovsam_test, y_test, GaussianProcessClassifier)
+ml_mod(x_pca_ovsam_train, y_ovsam, x_pca_ovsam_test, y_test, GradientBoostingClassifier)
+svm_model(x_pca_ovsam_train, y_ovsam, x_pca_ovsam_test, y_test)
+
+############# PCA - Random Undersampling
+x_pca_unsam_train, x_pca_unsam_test = pca_method(x_unsam,x_test)
+
+ml_mod(x_pca_unsam_train, y_unsam, x_pca_unsam_test, y_test, GaussianProcessClassifier)
+ml_mod(x_pca_unsam_train, y_unsam, x_pca_unsam_test, y_test, GradientBoostingClassifier)
+svm_model(x_pca_unsam_train, y_unsam, x_pca_unsam_test, y_test)
+
+#################################### Feature selection - SelectFromModel
+############# SelectFromModel - SMOTE
+x_sf_smote_train, x_sf_smote_test = selectfrommod(XGBClassifier(), x_smote, y_smote,x_test)
+ml_mod(x_sf_smote_train, y_smote, x_sf_smote_test, y_test, GaussianProcessClassifier)
+ml_mod(x_sf_smote_train, y_smote, x_sf_smote_test, y_test, GradientBoostingClassifier)
+svm_model(x_sf_smote_train, y_smote, x_sf_smote_test, y_test)
+
+############# SelectFromModel - Random Oversampling
+x_sf_ovsam_train, x_sf_ovsam_test = selectfrommod(XGBClassifier(), x_ovsam, y_ovsam,x_test)
+
+import matplotlib.pyplot as plt
+plt.figure(figsize=(30,10))
+import seaborn as sns
+sns.heatmap(x_sf_ovsam_train.corr(), annot=True)
+plt.title('Random Over Sampling data - Correlation affter applying SelectFromModel')
+
+ml_mod(x_sf_ovsam_train, y_ovsam, x_sf_ovsam_test, y_test, GaussianProcessClassifier)
+ml_mod(x_sf_ovsam_train, y_ovsam, x_sf_ovsam_test, y_test, GradientBoostingClassifier)
+svm_model(x_sf_ovsam_train, y_ovsam, x_sf_ovsam_test, y_test)
+
+############# SelectFromModel - Random Undersampling
+x_sf_unsam_train, x_sf_unsam_test = selectfrommod(XGBClassifier(), x_unsam, y_unsam,x_test)
+
+ml_mod(x_sf_unsam_train, y_unsam, x_sf_unsam_test, y_test, GaussianProcessClassifier)
+ml_mod(x_sf_unsam_train, y_unsam, x_sf_unsam_test, y_test, GradientBoostingClassifier)
+svm_model(x_sf_unsam_train, y_unsam, x_sf_unsam_test, y_test)
+
+###################################### ROC AUC ######################################
+roc_curves(x_test, y_test,np.array(x_pca_smote_test),np.array(x_pca_ovsam_test),np.array(x_pca_unsam_test),  np.array(x_pca_smote_train), np.array(y_smote),np.array(x_pca_ovsam_train), np.array(y_ovsam),np.array(x_pca_unsam_train), np.array(y_unsam), GaussianProcessClassifier, 'GaussianProcessClassifier - PCA')
+roc_curves(x_test, y_test,np.array(x_sf_smote_test),np.array(x_sf_ovsam_test),np.array(x_sf_unsam_test),  np.array(x_sf_smote_train), np.array(y_smote),np.array(x_sf_ovsam_train), np.array(y_ovsam),np.array(x_sf_unsam_train), np.array(y_unsam), GaussianProcessClassifier, 'GaussianProcessClassifier - SelectFromModel')
+
+roc_curves(x_test, y_test,np.array(x_pca_smote_test),np.array(x_pca_ovsam_test),np.array(x_pca_unsam_test),  np.array(x_pca_smote_train), np.array(y_smote),np.array(x_pca_ovsam_train), np.array(y_ovsam),np.array(x_pca_unsam_train), np.array(y_unsam), GradientBoostingClassifier, 'GradientBoostingClassifier - PCA')
+roc_curves(x_test, y_test,np.array(x_sf_smote_test),np.array(x_sf_ovsam_test),np.array(x_sf_unsam_test),  np.array(x_sf_smote_train), np.array(y_smote),np.array(x_sf_ovsam_train), np.array(y_ovsam),np.array(x_sf_unsam_train), np.array(y_unsam), GradientBoostingClassifier, 'GradientBoostingClassifier - SelectFromModel')
+
+roc_curves(x_test, y_test,np.array(x_pca_smote_test),np.array(x_pca_ovsam_test),np.array(x_pca_unsam_test),  np.array(x_pca_smote_train), np.array(y_smote),np.array(x_pca_ovsam_train), np.array(y_ovsam),np.array(x_pca_unsam_train), np.array(y_unsam), SVC, 'Support vector machines - PCA')
+roc_curves(x_test, y_test,np.array(x_sf_smote_test),np.array(x_sf_ovsam_test),np.array(x_sf_unsam_test),  np.array(x_sf_smote_train), np.array(y_smote),np.array(x_sf_ovsam_train), np.array(y_ovsam),np.array(x_sf_unsam_train), np.array(y_unsam), SVC, 'Support vector machines - SelectFromModel')
